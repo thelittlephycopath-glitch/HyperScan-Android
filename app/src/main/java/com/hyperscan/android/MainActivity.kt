@@ -86,7 +86,6 @@ class MainActivity : Activity() {
     }
 
     private suspend fun scanRepository(repo: String): Int {
-        suspend fun unused() = Unit
         fun get(url: String): String {
             val request = Request.Builder()
                 .url(url)
@@ -129,10 +128,9 @@ class MainActivity : Activity() {
                 .filter { path ->
                     val parts = path.split('/')
                     parts.none { it in ignoredDirectories } &&
-                        ignoredExtensions.none { path.endsWith(it, ignoreCase = true) } &&
-                        !path.substringAfterLast('/').startsWith('.')
+                        ignoredExtensions.none { path.endsWith(it, ignoreCase = true) }
                 }
-                .take(500)
+                .take(1_000)
                 .toList()
 
             coroutineScope {
