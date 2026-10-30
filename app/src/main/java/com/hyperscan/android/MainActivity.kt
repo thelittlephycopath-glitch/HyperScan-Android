@@ -77,38 +77,54 @@ class MainActivity : Activity() {
         }
         val metadata = JSONObject(get("https://api.github.com/repos/$repo"))
         val branch = metadata.optString("default_branch", "main")
-        val tree = JSONObject(get("https://api.github.com/repos/$repo/git/trees/$branch?recursive=1"))
-        val items = tree.optJSONArray("tree") ?: return 0
-        val paths = (0 until items.length()).mapNotNull { i -> items.optJSONObject(i) }
-            .filter { it.optString("type") == "blob" && it.optLong("size", Long.MAX_VALUE) in 1..500_000 }
-            .map { it.optString("path") }
-            .filter { p -> !p.startsWith(".git/") && !listOf(".png", ".jpg", ".jpeg", ".zip", ".jar", ".pdf", ".webp", ".gif").any { p.endsWith(it, true) } }
-            .take(300)
-        val sem = Semaphore(6)
+        val scanId = store.startScan(repo, branch)
         val found = AtomicInteger(0)
-        runBlocking {
-            val jobs = paths.map { path ->
-                async(Dispatchers.IO) {
-                    sem.withPermit {
-                        try {
-                            val encoded = path.split("/").joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
-                            val raw = get("https://raw.githubusercontent.com/$repo/$branch/$encoded")
-                            if (raw.length > 600_000) return@withPermit
-                            SecretScanner.scan(raw).forEach { finding ->
-                                store.save(repo, path, finding)
-                                found.incrementAndGet()
+        val seen = AtomicInteger(0)
+        try {
+            val tree = JSONObject(get("https://api.github.com/repos/$repo/git/trees/$branch?recursive=1"))
+            val items = tree.optJSONArray("tree") ?: run {
+                store.finishScan(scanId, 0, 0, "Repository tree unavailable")
+                return 0
+            }
+            val paths = (0 until items.length()).mapNotNull { i -> items.optJSONObject(i) }
+                .filter { it.optString("type") == "blob" && it.optLong("size", Long.MAX_VALUE) in 1..500_000 }
+                .map { it.optString("path") }
+                .filter { p -> !p.startsWith(".git/") && !listOf(".png", ".jpg", ".jpeg", ".zip", ".jar", ".pdf", ".webp", ".gif").any { p.endsWith(it, true) } }
+                .take(300)
+            val sem = Semaphore(6)
+            runBlocking {
+                val jobs = paths.map { path ->
+                    async(Dispatchers.IO) {
+                        sem.withPermit {
+                            try {
+                                val encoded = path.split("/").joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+                                val raw = get("https://raw.githubusercontent.com/$repo/$branch/$encoded")
+                                if (raw.length > 600_000) return@withPermit
+                                seen.incrementAndGet()
+                                SecretScanner.scan(raw).forEach { finding ->
+                                    store.save(repo, branch, path, finding)
+                                    found.incrementAndGet()
+                                }
+                            } catch (_: Exception) {
+                                // A single inaccessible file does not abort the scan.
                             }
-                        } catch (_: Exception) {
-                            // One inaccessible or binary-like file must not abort the scan.
                         }
                     }
                 }
+                jobs.forEach { it.await() }
             }
-            jobs.forEach { it.await() }
+            store.finishScan(scanId, seen.get(), found.get())
+            return found.get()
+        } catch (e: Exception) {
+            store.finishScan(scanId, seen.get(), found.get(), e.message ?: "Scan failed")
+            throw e
         }
-        return found.get()
     }
 
-    private fun showRecent() { results.text = store.recent().joinToString("\n\n").ifBlank { "No findings saved yet." } }
+    private fun showRecent() {
+        results.text = "RECENT FINDINGS\n\n" + store.recent().joinToString("\n\n").ifBlank { "No findings saved yet." } +
+            "\n\nSCAN HISTORY\n\n" + store.scanHistory().joinToString("\n").ifBlank { "No scans yet." }
+    }
+
     override fun onDestroy() { scope.cancel(); store.close(); super.onDestroy() }
 }
