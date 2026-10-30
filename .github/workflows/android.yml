@@ -15,6 +15,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v5
 
@@ -23,14 +26,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 11076708
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "Android SDK manager not found at $SDKMANAGER"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
