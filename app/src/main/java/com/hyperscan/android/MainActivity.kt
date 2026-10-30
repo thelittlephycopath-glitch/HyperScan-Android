@@ -49,7 +49,10 @@ class MainActivity : Activity() {
             textSize = 14f
             setPadding(0, 8, 0, 12)
         })
-        input = EditText(this).apply { hint = "owner/repository"; singleLine = true }
+        input = EditText(this).apply {
+            hint = "owner/repository"
+            setSingleLine(true)
+        }
         root.addView(input)
         root.addView(Button(this).apply { text = "Scan repository"; setOnClickListener { startScan() } })
         status = TextView(this).apply {
